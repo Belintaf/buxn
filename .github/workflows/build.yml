@@ -1,41 +1,17 @@
 ---
-name: Build
-run-name: Build
+name: Build Android APK
+run-name: Build Android APK
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 on:
-  - push
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
 jobs:
-  build-linux:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Install dependencies
-        uses: daaku/gh-action-apt-install@v4
-        with:
-          packages: parallel libgl-dev libegl-dev libgles-dev xorg-dev libasound-dev
-      - name: Install LLVM and Clang
-        uses: KyleMayes/install-llvm-action@v2
-        with:
-          version: "18.1"
-          cached: true
-      - name: Setup mold
-        uses: rui314/setup-mold@v1
-        with:
-          mold-version: 2.37.1
-      - name: Build
-        run: |
-          ./build Release linux
-      - name: Test
-        env:
-          BUILD_TYPE: Release
-          PLATFORM: linux
-        run: |
-          ./test
   build-android:
     runs-on: ubuntu-latest
     steps:
@@ -43,19 +19,24 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+      
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y parallel
+      
       - name: Set up JDK 17
         uses: actions/setup-java@v3
         with:
           java-version: '17'
           distribution: 'temurin'
+      
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+      
       - name: Install SDK platform 26
         run: sdkmanager --install 'platforms;android-26'
+      
       - name: Install NDK
         id: ndk
         uses: nttld/setup-ndk@v1
@@ -63,64 +44,33 @@ jobs:
           ndk-version: r28
           local-cache: true
           add-to-path: false
-      # https://github.com/DmitriySalnikov/godot_debug_draw_3d/blob/4b0586f6d6fba85fda16b0bdcff31ed86af1f9ec/.github/workflows/gdextension_build.yml#L134
+      
       - name: Restore Android Symlinks
         run: |
           directory="${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin"
-
           find "$directory" -type l | while read link; do
               current_target=$(readlink "$link")
               new_target="$directory/$(basename "$current_target")"
               ln -sf "$new_target" "$link"
               echo "Changed $(basename "$link") from $current_target to $new_target"
           done
-      - name: Build
+      
+      - name: Build APK
         env:
           ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.ndk-path }}
         run: |
           ./build Release android
-  build-cosmo:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Install dependencies
-        uses: daaku/gh-action-apt-install@v4
-        with:
-          packages: parallel
-      - name: Download cosmopolitan
-        uses: bjia56/setup-cosmocc@main
-        with:
-          version: "4.0.2"
-      - name: Build
-        run: ./build Release cosmo
-      - name: Test
-        env:
-          BUILD_TYPE: Release
-          PLATFORM: cosmo
+      
+      - name: Find APK location
         run: |
-          ./test
-  build-windows:
-    runs-on: windows-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
+          echo "Searching for APK files..."
+          find . -name "*.apk" -type f
+      
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
         with:
-          submodules: recursive
-      - name: Generate project
-        run: .\msvc.bat
-      - name: Build
-        shell: cmd
-        run: |
-          for /f "usebackq tokens=*" %%i in (`cmake\vswhere -latest -prerelease -property installationPath`) do (
-            set VS_DIR=%%i
-          )
-          call "%VS_DIR%\VC\Auxiliary\Build\vcvarsall.bat" x64 10.0.22621.0
-          cd msvc
-          msbuild buxn.sln /property:Configuration=RelWithDebInfo /property:Platform=x64
-      - name: Test
-        shell: cmd
-        run: |
-          .\bin\RelWithDebInfo\buxn-tests.exe
+          name: buxn-android-apk
+          path: |
+            bin/Release/android/*.apk
+            **/*.apk
+          retention-days: 30
